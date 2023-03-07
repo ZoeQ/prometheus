@@ -918,7 +918,7 @@ func (sl *scrapeLoop) run(interval, timeout time.Duration, errc chan<- error) {
 
 	var last time.Time
 
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(interval) // 定时执行
 	defer ticker.Stop()
 
 mainLoop:
@@ -947,7 +947,7 @@ mainLoop:
 		b := sl.buffers.Get(sl.lastScrapeSize).([]byte)
 		buf := bytes.NewBuffer(b)
 
-		contentType, scrapeErr := sl.scraper.scrape(scrapeCtx, buf)
+		contentType, scrapeErr := sl.scraper.scrape(scrapeCtx, buf) // 抓取
 		cancel()
 
 		if scrapeErr == nil {
@@ -967,7 +967,7 @@ mainLoop:
 
 		// A failed scrape is the same as an empty scrape,
 		// we still call sl.append to trigger stale markers.
-		total, added, seriesAdded, appErr := sl.append(b, contentType, start)
+		total, added, seriesAdded, appErr := sl.append(b, contentType, start) // 写入底层存储
 		if appErr != nil {
 			level.Debug(sl.l).Log("msg", "Append failed", "err", appErr)
 			// The append failed, probably due to a parse error or sample limit.
@@ -977,12 +977,13 @@ mainLoop:
 			}
 		}
 
-		sl.buffers.Put(b)
+		sl.buffers.Put(b) // 写入buffer
 
 		if scrapeErr == nil {
 			scrapeErr = appErr
 		}
 
+		// 更新scrapeLoop状态
 		if err := sl.report(start, time.Since(start), total, added, seriesAdded, scrapeErr); err != nil {
 			level.Warn(sl.l).Log("msg", "Appending scrape report failed", "err", err)
 		}
@@ -994,7 +995,7 @@ mainLoop:
 			return
 		case <-sl.ctx.Done():
 			break mainLoop
-		case <-ticker.C:
+		case <-ticker.C: // 循环执行
 		}
 	}
 

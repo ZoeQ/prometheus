@@ -341,8 +341,11 @@ func main() {
 	level.Info(logger).Log("vm_limits", prom_runtime.VMLimits())
 
 	var (
-		localStorage  = &readyStorage{}
+		// 指的是tsdb，本地存储
+		localStorage = &readyStorage{}
+		// metrics的远程存储
 		remoteStorage = remote.NewStorage(log.With(logger, "component", "remote"), prometheus.DefaultRegisterer, localStorage.StartTime, cfg.localStoragePath, time.Duration(cfg.RemoteFlushDeadline))
+		// localStorage和remoteStorage的读写代理
 		fanoutStorage = storage.NewFanout(logger, localStorage, remoteStorage)
 	)
 
@@ -350,14 +353,18 @@ func main() {
 		ctxWeb, cancelWeb = context.WithCancel(context.Background())
 		ctxRule           = context.Background()
 
+		// 发送告警给alertmanager
 		notifierManager = notifier.NewManager(&cfg.notifier, log.With(logger, "component", "notifier"))
 
 		ctxScrape, cancelScrape = context.WithCancel(context.Background())
-		discoveryManagerScrape  = discovery.NewManager(ctxScrape, log.With(logger, "component", "discovery manager scrape"), discovery.Name("scrape"))
+		// 服务发现
+		discoveryManagerScrape = discovery.NewManager(ctxScrape, log.With(logger, "component", "discovery manager scrape"), discovery.Name("scrape"))
 
 		ctxNotify, cancelNotify = context.WithCancel(context.Background())
-		discoveryManagerNotify  = discovery.NewManager(ctxNotify, log.With(logger, "component", "discovery manager notify"), discovery.Name("notify"))
+		// 告警通知服务发现
+		discoveryManagerNotify = discovery.NewManager(ctxNotify, log.With(logger, "component", "discovery manager notify"), discovery.Name("notify"))
 
+		// todo 需要关注一下，利用discoveryManagerScrape组件发现的targets，抓取对应targets的所有metrics，并将抓取的metrics存储到fanoutStorage中
 		scrapeManager = scrape.NewManager(log.With(logger, "component", "scrape manager"), fanoutStorage)
 
 		opts = promql.EngineOpts{
@@ -370,7 +377,7 @@ func main() {
 		}
 
 		queryEngine = promql.NewEngine(opts)
-
+		// 用于rules查询和计算和发送告警
 		ruleManager = rules.NewManager(&rules.ManagerOptions{
 			Appendable:      fanoutStorage,
 			TSDB:            localStorage,
@@ -419,6 +426,7 @@ func main() {
 		cfg.web.Flags[f.Name] = f.Value.String()
 	}
 
+	// Web组件用于为Storage组件，queryEngine组件，scrapeManager组件， ruleManager组件和notifier 组件提供外部HTTP访问方式
 	// Depends on cfg.web.ScrapeManager so needs to be after cfg.web.ScrapeManager = scrapeManager.
 	webHandler := web.New(log.With(logger, "component", "web"), &cfg.web)
 
@@ -427,9 +435,10 @@ func main() {
 		conntrack.DialWithTracing(),
 	)
 
+	// 配置管理，除了服务组件ruleManager用的方法是Update，其他服务组件的在匿名函数中通过各自的ApplyConfig方法，实现配置的管理
 	reloaders := []func(cfg *config.Config) error{
-		remoteStorage.ApplyConfig,
-		webHandler.ApplyConfig,
+		remoteStorage.ApplyConfig, // 存储配置
+		webHandler.ApplyConfig,    // web配置
 		func(cfg *config.Config) error {
 			if cfg.GlobalConfig.QueryLogFile == "" {
 				queryEngine.SetQueryLogger(nil)
@@ -445,7 +454,7 @@ func main() {
 		},
 		// The Scrape and notifier managers need to reload before the Discovery manager as
 		// they need to read the most updated config when receiving the new targets list.
-		scrapeManager.ApplyConfig,
+		scrapeManager.ApplyConfig, // scrapeManager配置
 		func(cfg *config.Config) error {
 			c := make(map[string]sd_config.ServiceDiscoveryConfig)
 			for _, v := range cfg.ScrapeConfigs {
